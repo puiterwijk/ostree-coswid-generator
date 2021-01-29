@@ -1,0 +1,13 @@
+[package]
+name = "ostree-coswid-generator"
+version = "0.1.0"
+authors = ["Patrick Uiterwijk <patrick@puiterwijk.org>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+coswid = { version = "0.1.1", path = "../coswid-rs" }
+ostree = { version = "0.9.1", features = ["v2020_7"] }
+
+gio = "0.9.0"
