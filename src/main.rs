@@ -12,10 +12,21 @@ fn fill_coswid_tag_from_file(tag: &mut coswid::CoSWIDTag, commit: gio::File, can
 
     while let Some(file_info) = children.next_file(Some(cancel)).context("Unable to get next file")? {
         let file = children.get_child(&file_info).expect("No child file?");
-        println!("File: {:?}, path: {:?}", file, file.get_path());
+        println!("File: {:?}, type: {:?}, path: {:?}", file, file_info.get_file_type(), file.get_path());
+
+        match file_info.get_file_type() {
+            gio::FileType::Directory => {
+                fill_coswid_tag_from_file(tag, file, cancel)?;
+            }
+            gio::FileType::Regular => {
+                let reader = file.read(Some(cancel))?;
+                println!("Got regular file, reader: {:?}", reader);
+            }
+            other => println!("Got different type of file: {}", other)
+        }
     }
 
-    todo!();
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -28,11 +39,8 @@ fn main() -> Result<()> {
         .context("Failed to open ostree repository")?;
     println!("repo: {:?}", repo);
 
-    println!("Refs: {:?}", repo.list_refs(None, Some(&cancel)));
-
     let commit = repo.read_commit("fedora:fedora/stable/x86_64/iot", Some(&cancel))
         .context("Failed to read the commit")?;
-    println!("Commit file: {:?}", commit.0);
     println!("Commit ID: {}", commit.1);
 
     let coswidtag = coswid::CoSWIDTag{
