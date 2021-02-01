@@ -1,7 +1,11 @@
 use anyhow::{Context, Result};
 
 use gio::{prelude::InputStreamExtManual, FileEnumeratorExt, FileExt};
-use glib::Cast;
+use glib::{
+    translate::{from_glib_full, ToGlibPtr},
+    variant::FromVariant,
+    Cast,
+};
 use ostree::RepoFileExt;
 use sha2::{Digest, Sha256};
 
@@ -146,6 +150,26 @@ fn main() -> Result<()> {
         .context("Failed to read the commit")?;
     println!("Commit ID: {}", commit.1);
 
+    let (file_var, _) = repo.load_commit(&commit.1)?;
+    println!("file_var: {:?}", file_var);
+
+    let file_var_info: glib::Variant = unsafe {
+        from_glib_full(glib_sys::g_variant_get_child_value(
+            file_var.to_glib_none().0,
+            0,
+        ))
+    };
+
+    let vardict =
+        glib::VariantDict::from_variant(&file_var_info).expect("Invalid commit variant found");
+    let version = vardict
+        .lookup_value(
+            "version",
+            Some(unsafe { glib::VariantTy::from_str_unchecked("s") }),
+        )
+        .expect("No version found in commit object");
+    let version = version.get_str().expect("Non-string version found");
+
     let mut outfile = std::fs::File::create(&outfile_name)
         .with_context(|| format!("Error creating output file at {}", &outfile_name))?;
 
@@ -153,8 +177,7 @@ fn main() -> Result<()> {
         .context("Error building root directory entry")?;
 
     let coswidtag = coswid::CoSWIDTag {
-        // TODO: Build tag ID dynamically
-        tag_id: "org.fedoraproject.iot.x86_64.stable.insert_verison_here".to_string(),
+        tag_id: format!("org.fedoraproject.iot.x86_64.stable.{}", version),
         tag_version: 0,
 
         corpus: Some(true),
@@ -162,20 +185,29 @@ fn main() -> Result<()> {
         supplemental: Some(false),
 
         software_name: "Fedora IoT".to_string(),
-        // TODO: Fill
-        software_version: Some("TODO".to_string()),
+        software_version: Some(version.to_string()),
+        // TODO
         version_scheme: None,
 
         media: None,
 
         software_meta: None,
-        entity: coswid::OneOrMany::One(coswid::EntityEntry {
-            entity_name: "Patrick Uiterwijk".to_string(),
-            reg_id: None,
-            role: coswid::OneOrMany::One(coswid::EntityRole::TagCreator),
-            thumbprint: None,
-            global_attributes: Default::default(),
-        }),
+        entity: coswid::OneOrMany::Many(vec![
+            coswid::EntityEntry {
+                entity_name: "ostree-coswid-generator".to_string(),
+                reg_id: None,
+                role: coswid::OneOrMany::One(coswid::EntityRole::TagCreator),
+                thumbprint: None,
+                global_attributes: Default::default(),
+            },
+            coswid::EntityEntry {
+                entity_name: "Fedora Project".to_string(),
+                reg_id: None,
+                role: coswid::OneOrMany::One(coswid::EntityRole::Distributor),
+                thumbprint: None,
+                global_attributes: Default::default(),
+            },
+        ]),
 
         link: None,
         payload: Some(coswid::PayloadEntry {
