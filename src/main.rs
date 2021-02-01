@@ -151,8 +151,6 @@ fn main() -> Result<()> {
     println!("Commit ID: {}", commit.1);
 
     let (file_var, _) = repo.load_commit(&commit.1)?;
-    println!("file_var: {:?}", file_var);
-
     let file_var_info: glib::Variant = unsafe {
         from_glib_full(glib_sys::g_variant_get_child_value(
             file_var.to_glib_none().0,
