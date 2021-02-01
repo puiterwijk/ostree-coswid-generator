@@ -1,35 +1,35 @@
 use anyhow::{Context, Result};
 
+use gio::{prelude::InputStreamExtManual, FileEnumeratorExt, FileExt};
 use glib::Cast;
-use gio::{
-    FileExt,
-    FileEnumeratorExt,
-    prelude::InputStreamExtManual,
-};
 use ostree::RepoFileExt;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 fn hash_file(instream: gio::InputStream) -> Result<Vec<u8>> {
     let mut hasher = Sha256::new();
     let mut reader = instream.into_read();
 
-    let _ = std::io::copy(&mut reader, &mut hasher)?;
+    let _ = std::io::copy(&mut reader, &mut hasher).context("Error copying input file to hash");
 
     Ok(hasher.finalize().as_slice().to_vec())
 }
 
-fn get_coswid_dir_from_file(repo: &ostree::Repo, dir: gio::File, cancel: Option<&gio::Cancellable>) -> Result<coswid::DirectoryEntry> {
+fn get_coswid_dir_from_file(
+    repo: &ostree::Repo,
+    dir: gio::File,
+    cancel: Option<&gio::Cancellable>,
+) -> Result<coswid::DirectoryEntry> {
     let mut files: Vec<coswid::FileEntry> = Vec::new();
     let mut dirs: Vec<coswid::DirectoryEntry> = Vec::new();
 
     let fs_name = match dir.get_basename() {
         Some(dir) => dir.to_str().unwrap().to_string(),
-        None => "".to_string()
+        None => "".to_string(),
     };
 
     println!("Handling directory {}", fs_name);
 
-    let mut new_entry = coswid::DirectoryEntry{
+    let mut new_entry = coswid::DirectoryEntry {
         key: Some(true),
         location: None,
         fs_name,
@@ -41,45 +41,56 @@ fn get_coswid_dir_from_file(repo: &ostree::Repo, dir: gio::File, cancel: Option<
         global_attributes: Default::default(),
     };
 
-    let children = dir.enumerate_children("", gio::FileQueryInfoFlags::all(), cancel)
+    let children = dir
+        .enumerate_children("", gio::FileQueryInfoFlags::all(), cancel)
         .context("Unable to enumerate commit children")?;
 
-    while let Some(file_info) = children.next_file(cancel).context("Unable to get next file")? {
+    while let Some(file_info) = children
+        .next_file(cancel)
+        .context("Unable to get next file")?
+    {
         let file = children.get_child(&file_info).expect("No child file?");
+        let display_path = file.get_path().unwrap();
+        let display_path = display_path.to_string_lossy();
 
         match file_info.get_file_type() {
             gio::FileType::Directory => {
                 dirs.push(
-                    get_coswid_dir_from_file(repo, file, cancel)?
+                    get_coswid_dir_from_file(repo, file, cancel).with_context(|| {
+                        format!("Error building CoSWID directory entry at {}", display_path)
+                    })?,
                 );
             }
             gio::FileType::Regular => {
-                let file: ostree::RepoFile = file.downcast().expect("Could not downcast to RepoFile");
-                let csum = file.get_checksum().expect("Could not find checksum for file").as_str().to_string();
-                let (instream, _, _) = repo.load_file(&csum, cancel)?;
+                let file: ostree::RepoFile =
+                    file.downcast().expect("Could not downcast to RepoFile");
+                let csum = file
+                    .get_checksum()
+                    .expect("Could not find checksum for file")
+                    .as_str()
+                    .to_string();
+                let (instream, _, _) = repo
+                    .load_file(&csum, cancel)
+                    .with_context(|| format!("Error loading file at {}", display_path))?;
                 let instream = instream.expect("Did not get input stream?");
 
-                let digest = hash_file(instream)?;
+                let digest = hash_file(instream)
+                    .with_context(|| format!("Error hashing file at {}", display_path))?;
 
-                files.push(
-                    coswid::FileEntry {
-                        key: Some(true),
-                        location: None,
-                        fs_name: file.get_basename().unwrap().to_str().unwrap().to_string(),
-                        root: "/".to_string(),
-                        size: None,
-                        file_version: None,
-                        hash: Some((
-                            coswid::HashAlgorithm::Sha256,
-                            digest,
-                        )),
-                    }
-                );
+                files.push(coswid::FileEntry {
+                    key: Some(true),
+                    location: None,
+                    fs_name: file.get_basename().unwrap().to_str().unwrap().to_string(),
+                    root: "/".to_string(),
+                    size: None,
+                    file_version: None,
+                    hash: Some((coswid::HashAlgorithm::Sha256, digest)),
+                });
             }
             gio::FileType::SymbolicLink => {
                 // Nothing in the spec....
             }
-            other => println!("Got different type of file: {}", other)
+            other => println!("Got different type of file: {}", other),
         }
     }
 
@@ -119,7 +130,7 @@ fn main() -> Result<()> {
     // Get arguments
     let repo_dir = args.next().expect(USAGESTR);
     let ref_name = args.next().expect(USAGESTR);
-    let outfile = args.next().expect(USAGESTR);
+    let outfile_name = args.next().expect(USAGESTR);
 
     // Now run
     let cancel = gio::Cancellable::new();
@@ -130,15 +141,18 @@ fn main() -> Result<()> {
     repo.open(Some(&cancel))
         .context("Failed to open ostree repository")?;
 
-    let commit = repo.read_commit(&ref_name, Some(&cancel))
+    let commit = repo
+        .read_commit(&ref_name, Some(&cancel))
         .context("Failed to read the commit")?;
     println!("Commit ID: {}", commit.1);
 
-    let mut outfile = std::fs::File::create(outfile)?;
+    let mut outfile = std::fs::File::create(&outfile_name)
+        .with_context(|| format!("Error creating output file at {}", &outfile_name))?;
 
-    let root = get_coswid_dir_from_file(&repo, commit.0, Some(&cancel))?;
+    let root = get_coswid_dir_from_file(&repo, commit.0, Some(&cancel))
+        .context("Error building root directory entry")?;
 
-    let coswidtag = coswid::CoSWIDTag{
+    let coswidtag = coswid::CoSWIDTag {
         // TODO: Build tag ID dynamically
         tag_id: "org.fedoraproject.iot.x86_64.stable.insert_verison_here".to_string(),
         tag_version: 0,
@@ -176,7 +190,5 @@ fn main() -> Result<()> {
         global_attributes: Default::default(),
     };
 
-    ciborium::ser::into_writer(&coswidtag, &mut outfile)?;
-
-    todo!();
+    ciborium::ser::into_writer(&coswidtag, &mut outfile).context("Unable to serialize output file")
 }
