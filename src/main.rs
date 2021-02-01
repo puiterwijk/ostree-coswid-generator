@@ -76,6 +76,9 @@ fn get_coswid_dir_from_file(repo: &ostree::Repo, dir: gio::File, cancel: Option<
                     }
                 );
             }
+            gio::FileType::SymbolicLink => {
+                // Nothing in the spec....
+            }
             other => println!("Got different type of file: {}", other)
         }
     }
@@ -106,19 +109,32 @@ fn get_coswid_dir_from_file(repo: &ostree::Repo, dir: gio::File, cancel: Option<
     Ok(new_entry)
 }
 
+const USAGESTR: &str = "Usage: ostree-coswid-generator <ostree-repo> <ref-name> <outfile>";
 fn main() -> Result<()> {
+    let mut args = std::env::args();
+
+    // Ignore our name
+    args.next();
+
+    // Get arguments
+    let repo_dir = args.next().expect(USAGESTR);
+    let ref_name = args.next().expect(USAGESTR);
+    let outfile = args.next().expect(USAGESTR);
+
+    // Now run
     let cancel = gio::Cancellable::new();
 
     // For some reason, new(path) doesn't work.
-    let repopath = gio::File::new_for_path("./repo");
+    let repopath = gio::File::new_for_path(repo_dir);
     let repo = ostree::Repo::new(&repopath);
     repo.open(Some(&cancel))
         .context("Failed to open ostree repository")?;
-    println!("repo: {:?}", repo);
 
-    let commit = repo.read_commit("fedora:fedora/stable/x86_64/iot", Some(&cancel))
+    let commit = repo.read_commit(&ref_name, Some(&cancel))
         .context("Failed to read the commit")?;
     println!("Commit ID: {}", commit.1);
+
+    let mut outfile = std::fs::File::create(outfile)?;
 
     let root = get_coswid_dir_from_file(&repo, commit.0, Some(&cancel))?;
 
@@ -131,7 +147,7 @@ fn main() -> Result<()> {
         patch: Some(false),
         supplemental: Some(false),
 
-        software_name: "Fedora IoT OSTree".to_string(),
+        software_name: "Fedora IoT".to_string(),
         // TODO: Fill
         software_version: Some("TODO".to_string()),
         version_scheme: None,
@@ -160,7 +176,7 @@ fn main() -> Result<()> {
         global_attributes: Default::default(),
     };
 
-    println!("Built tag: {:?}", coswidtag);
+    ciborium::ser::into_writer(&coswidtag, &mut outfile)?;
 
     todo!();
 }

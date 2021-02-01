@@ -15,3 +15,5 @@ glib = "0.10.1"
 
 sha2 = "0.9.3"
 anyhow = "1.0"
+
+ciborium = { version = "0.1.0", features = ["std"] }
